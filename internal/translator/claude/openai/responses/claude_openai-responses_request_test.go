@@ -236,6 +236,26 @@ func TestConvertOpenAIResponsesRequestToClaude_DropsApplyPatchCustomTool(t *test
 	}
 }
 
+func TestConvertOpenAIResponsesRequestToClaude_StringInputBecomesUserMessage(t *testing.T) {
+	raw := []byte(`{
+		"model":"claude-test",
+		"input":"hello from codex"
+	}`)
+
+	out := ConvertOpenAIResponsesRequestToClaude("claude-opus-4-8", raw, false)
+	root := gjson.ParseBytes(out)
+
+	if got := root.Get("messages.#").Int(); got != 1 {
+		t.Fatalf("messages count = %d, want 1. Output: %s", got, string(out))
+	}
+	if got := root.Get("messages.0.role").String(); got != "user" {
+		t.Fatalf("messages.0.role = %q, want user. Output: %s", got, string(out))
+	}
+	if got := root.Get("messages.0.content").String(); got != "hello from codex" {
+		t.Fatalf("messages.0.content = %q, want %q. Output: %s", got, "hello from codex", string(out))
+	}
+}
+
 func testClaudeResponsesThinkingSignature(t *testing.T) (string, string) {
 	t.Helper()
 	channelBlock := []byte{}

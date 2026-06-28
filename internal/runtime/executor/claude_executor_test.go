@@ -1385,6 +1385,49 @@ func TestClaudeExecutor_GeneratesNewUserIDByDefault(t *testing.T) {
 	}
 }
 
+func TestClaudeExecutor_ExecuteOpenAIResponsesStringInputTranslatesToClaudeMessage(t *testing.T) {
+	var seenBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		seenBody = bytes.Clone(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","model":"claude-opus-4-8","role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer server.Close()
+
+	executor := NewClaudeExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"api_key":  "key-123",
+		"base_url": server.URL,
+	}}
+	payload := []byte(`{"model":"claude-opus-4-8","input":"hello from codex"}`)
+
+	resp, err := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "claude-opus-4-8",
+		Payload: payload,
+	}, cliproxyexecutor.Options{
+		SourceFormat: sdktranslator.FormatOpenAIResponse,
+	})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if len(seenBody) == 0 {
+		t.Fatal("expected request body to be captured")
+	}
+	if got := gjson.GetBytes(seenBody, "messages.#").Int(); got != 1 {
+		t.Fatalf("messages count = %d, want 1. Body: %s", got, string(seenBody))
+	}
+	if got := gjson.GetBytes(seenBody, "messages.0.role").String(); got != "user" {
+		t.Fatalf("messages.0.role = %q, want user. Body: %s", got, string(seenBody))
+	}
+	if got := gjson.GetBytes(seenBody, "messages.0.content").String(); got != "hello from codex" {
+		t.Fatalf("messages.0.content = %q, want %q. Body: %s", got, "hello from codex", string(seenBody))
+	}
+	if got := gjson.GetBytes(resp.Payload, "output.0.content.0.text").String(); got != "ok" {
+		t.Fatalf("response output text = %q, want ok", got)
+	}
+}
+
 func TestClaudeExecutor_ExecuteOpenAINonStreamRejectsEmptyClaudeStream(t *testing.T) {
 	_, err := executeOpenAIChatCompletionThroughClaude(t, "")
 	if err == nil {

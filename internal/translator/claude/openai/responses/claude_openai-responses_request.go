@@ -415,6 +415,11 @@ func ConvertOpenAIResponsesRequestToClaude(modelName string, inputRawJSON []byte
 			return true
 		})
 	}
+	if input := root.Get("input"); input.Exists() && input.Type == gjson.String {
+		msg := []byte(`{"role":"user","content":""}`)
+		msg, _ = sjson.SetBytes(msg, "content", input.String())
+		appendMessage(msg)
+	}
 	flushPendingReasoning()
 	flushPendingToolUses()
 

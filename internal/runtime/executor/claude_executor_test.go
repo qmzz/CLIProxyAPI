@@ -611,6 +611,34 @@ func TestClaudeDeviceProfileStabilizationEnabled_DefaultFalse(t *testing.T) {
 	}
 }
 
+func TestApplyClaudeHeaders_CustomBaseURLAPIKeyUsesXAPIKey(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "https://claude-proxy.example.com/v1/messages", nil)
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{"api_key": "sk-ant-api03-test"}}
+
+	applyClaudeHeaders(req, auth, "sk-ant-api03-test", true, nil, &config.Config{})
+
+	if got := req.Header.Get("x-api-key"); got != "sk-ant-api03-test" {
+		t.Fatalf("x-api-key = %q, want configured api key", got)
+	}
+	if got := req.Header.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization = %q, want empty for Claude API key auth", got)
+	}
+}
+
+func TestApplyClaudeHeaders_CustomBaseURLOAuthTokenUsesAuthorization(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "https://claude-proxy.example.com/v1/messages", nil)
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{"api_key": "sk-ant-oat-test"}}
+
+	applyClaudeHeaders(req, auth, "sk-ant-oat-test", true, nil, &config.Config{})
+
+	if got := req.Header.Get("Authorization"); got != "Bearer sk-ant-oat-test" {
+		t.Fatalf("Authorization = %q, want OAuth bearer token", got)
+	}
+	if got := req.Header.Get("x-api-key"); got != "" {
+		t.Fatalf("x-api-key = %q, want empty for Claude OAuth auth", got)
+	}
+}
+
 func TestApplyClaudeToolPrefix(t *testing.T) {
 	input := []byte(`{"tools":[{"name":"alpha"},{"name":"proxy_bravo"}],"tool_choice":{"type":"tool","name":"charlie"},"messages":[{"role":"assistant","content":[{"type":"tool_use","name":"delta","id":"t1","input":{}}]}]}`)
 	out := applyClaudeToolPrefix(input, "proxy_")

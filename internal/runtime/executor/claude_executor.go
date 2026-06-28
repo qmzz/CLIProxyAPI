@@ -162,9 +162,7 @@ func (e *ClaudeExecutor) PrepareRequest(req *http.Request, auth *cliproxyauth.Au
 	if strings.TrimSpace(apiKey) == "" {
 		return nil
 	}
-	useAPIKey := auth != nil && auth.Attributes != nil && strings.TrimSpace(auth.Attributes["api_key"]) != ""
-	isAnthropicBase := req.URL != nil && strings.EqualFold(req.URL.Scheme, "https") && strings.EqualFold(req.URL.Host, "api.anthropic.com")
-	if isAnthropicBase && useAPIKey {
+	if useClaudeAPIKeyHeader(auth, apiKey) {
 		req.Header.Del("Authorization")
 		req.Header.Set("x-api-key", apiKey)
 	} else {
@@ -1072,12 +1070,13 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 		hd = cfg.ClaudeHeaderDefaults
 	}
 
-	useAPIKey := auth != nil && auth.Attributes != nil && strings.TrimSpace(auth.Attributes["api_key"]) != ""
+	useAPIKey := useClaudeAPIKeyHeader(auth, apiKey)
 	isAnthropicBase := r.URL != nil && strings.EqualFold(r.URL.Scheme, "https") && strings.EqualFold(r.URL.Host, "api.anthropic.com")
-	if isAnthropicBase && useAPIKey {
+	if useAPIKey {
 		r.Header.Del("Authorization")
 		r.Header.Set("x-api-key", apiKey)
 	} else {
+		r.Header.Del("x-api-key")
 		r.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	r.Header.Set("Content-Type", "application/json")
@@ -1194,6 +1193,16 @@ func claudeCreds(a *cliproxyauth.Auth) (apiKey, baseURL string) {
 		}
 	}
 	return
+}
+
+func useClaudeAPIKeyHeader(auth *cliproxyauth.Auth, apiKey string) bool {
+	if auth == nil || auth.Attributes == nil {
+		return false
+	}
+	if strings.TrimSpace(auth.Attributes["api_key"]) == "" {
+		return false
+	}
+	return !isClaudeOAuthToken(apiKey)
 }
 
 func checkSystemInstructions(payload []byte) []byte {

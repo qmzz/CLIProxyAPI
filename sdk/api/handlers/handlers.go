@@ -26,6 +26,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"golang.org/x/net/context"
 )
@@ -758,6 +759,7 @@ func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entr
 				addon = hdr.Clone()
 			}
 		}
+		logExecutionError(ctx, "execute", entryProtocol, responseProtocol, providers, normalizedModel, originalRequestedModel, status, err)
 		return nil, nil, &interfaces.ErrorMessage{StatusCode: status, Error: err, Addon: addon}
 	}
 	executedReq, executedOpts := afterAuthCapture.apply(req, opts)
@@ -765,6 +767,28 @@ func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entr
 	responseHeaders := downstreamHeadersFromExecutor(rawResponseHeaders, PassthroughHeadersEnabled(h.Cfg))
 	body, responseHeaders := h.applyResponseInterceptors(ctx, responseProtocol, normalizedModel, originalRequestedModel, executedOpts, rawResponseHeaders, responseHeaders, executedOpts.OriginalRequest, executedReq.Payload, resp.Payload, http.StatusOK, execOptions.SkipInterceptorPluginID)
 	return body, responseHeaders, nil
+}
+
+func logExecutionError(ctx context.Context, operation, entryProtocol, responseProtocol string, providers []string, normalizedModel, originalRequestedModel string, status int, err error) {
+	if err == nil {
+		return
+	}
+	entry := log.WithFields(log.Fields{
+		"operation":        operation,
+		"entry_protocol":   entryProtocol,
+		"response_format":  responseProtocol,
+		"providers":        strings.Join(providers, ","),
+		"model":            normalizedModel,
+		"requested_model":  originalRequestedModel,
+		"status":           status,
+		"error_type":       fmt.Sprintf("%T", err),
+		"context_canceled": errors.Is(err, context.Canceled),
+		"context_timeout":  errors.Is(err, context.DeadlineExceeded),
+	})
+	if requestID := logging.GetRequestID(ctx); requestID != "" {
+		entry = entry.WithField("request_id", requestID)
+	}
+	entry.Errorf("model execution failed: %v", err)
 }
 
 // ExecuteCountWithAuthManager executes a non-streaming request via the core auth manager.
@@ -822,6 +846,7 @@ func (h *BaseAPIHandler) executeCountWithAuthManager(ctx context.Context, handle
 				addon = hdr.Clone()
 			}
 		}
+		logExecutionError(ctx, "count", handlerType, handlerType, providers, normalizedModel, originalRequestedModel, status, err)
 		return nil, nil, &interfaces.ErrorMessage{StatusCode: status, Error: err, Addon: addon}
 	}
 	executedReq, executedOpts := afterAuthCapture.apply(req, opts)

@@ -1831,6 +1831,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 		streamResult, errStream := executor.ExecuteStream(ctx, auth, execReq, execOpts)
 		if errStream != nil {
 			if errCtx := ctx.Err(); errCtx != nil {
+				logExecutorFailure(ctx, "execute_stream_context_done", auth, provider, routeModel, execModel, execOpts, errCtx)
 				return nil, errCtx
 			}
 			rerr := &Error{Message: errStream.Error()}
@@ -1839,6 +1840,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 			}
 			result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, Success: false, Error: rerr}
 			result.RetryAfter = retryAfterFromError(errStream)
+			logExecutorFailure(ctx, "execute_stream", auth, provider, routeModel, execModel, execOpts, errStream)
 			m.MarkResult(ctx, result)
 			if isRequestInvalidError(errStream) {
 				return nil, errStream
@@ -1851,6 +1853,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 		if bootstrapErr != nil {
 			if errCtx := ctx.Err(); errCtx != nil {
 				discardStreamChunks(streamResult.Chunks)
+				logExecutorFailure(ctx, "stream_bootstrap_context_done", auth, provider, routeModel, execModel, execOpts, errCtx)
 				return nil, errCtx
 			}
 			if isRequestInvalidError(bootstrapErr) {
@@ -1860,6 +1863,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 				}
 				result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, Success: false, Error: rerr}
 				result.RetryAfter = retryAfterFromError(bootstrapErr)
+				logExecutorFailure(ctx, "stream_bootstrap_invalid", auth, provider, routeModel, execModel, execOpts, bootstrapErr)
 				m.MarkResult(ctx, result)
 				discardStreamChunks(streamResult.Chunks)
 				return nil, bootstrapErr
@@ -1871,6 +1875,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 				}
 				result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, Success: false, Error: rerr}
 				result.RetryAfter = retryAfterFromError(bootstrapErr)
+				logExecutorFailure(ctx, "stream_bootstrap_retry", auth, provider, routeModel, execModel, execOpts, bootstrapErr)
 				m.MarkResult(ctx, result)
 				discardStreamChunks(streamResult.Chunks)
 				lastErr = bootstrapErr
@@ -1882,6 +1887,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 			}
 			result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, Success: false, Error: rerr}
 			result.RetryAfter = retryAfterFromError(bootstrapErr)
+			logExecutorFailure(ctx, "stream_bootstrap", auth, provider, routeModel, execModel, execOpts, bootstrapErr)
 			m.MarkResult(ctx, result)
 			discardStreamChunks(streamResult.Chunks)
 			return nil, newStreamBootstrapError(bootstrapErr, streamResult.Headers)
@@ -1890,6 +1896,7 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 		if closed && len(buffered) == 0 {
 			emptyErr := &Error{Code: "empty_stream", Message: "upstream stream closed before first payload", Retryable: true}
 			result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, Success: false, Error: emptyErr}
+			logExecutorFailure(ctx, "stream_empty", auth, provider, routeModel, execModel, execOpts, emptyErr)
 			m.MarkResult(ctx, result)
 			if idx < len(execModels)-1 {
 				lastErr = emptyErr
@@ -2519,6 +2526,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 			if se, ok := errors.AsType[cliproxyexecutor.StatusError](errPrepare); ok && se != nil {
 				result.Error.HTTPStatus = se.StatusCode()
 			}
+			logExecutorFailure(execCtx, "prepare_request_auth", auth, provider, routeModel, routeModel, opts, errPrepare)
 			m.MarkResult(execCtx, result)
 			lastErr = errPrepare
 			continue
@@ -2534,6 +2542,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 			result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, Success: errExec == nil}
 			if errExec != nil {
 				if errCtx := execCtx.Err(); errCtx != nil {
+					logExecutorFailure(execCtx, "execute_context_done", auth, provider, routeModel, upstreamModel, execOpts, errCtx)
 					return cliproxyexecutor.Response{}, errCtx
 				}
 				result.Error = &Error{Message: errExec.Error()}
@@ -2543,6 +2552,7 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 				if ra := retryAfterFromError(errExec); ra != nil {
 					result.RetryAfter = ra
 				}
+				logExecutorFailure(execCtx, "execute", auth, provider, routeModel, upstreamModel, execOpts, errExec)
 				m.MarkResult(execCtx, result)
 				if isRequestInvalidError(errExec) {
 					return cliproxyexecutor.Response{}, errExec
@@ -2621,6 +2631,7 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 			if se, ok := errors.AsType[cliproxyexecutor.StatusError](errPrepare); ok && se != nil {
 				result.Error.HTTPStatus = se.StatusCode()
 			}
+			logExecutorFailure(execCtx, "prepare_request_auth_count", auth, provider, routeModel, routeModel, opts, errPrepare)
 			m.MarkResult(execCtx, result)
 			lastErr = errPrepare
 			continue
@@ -2721,6 +2732,7 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			if se, ok := errors.AsType[cliproxyexecutor.StatusError](errPrepare); ok && se != nil {
 				result.Error.HTTPStatus = se.StatusCode()
 			}
+			logExecutorFailure(execCtx, "prepare_request_auth_stream", auth, provider, routeModel, routeModel, opts, errPrepare)
 			m.MarkResult(execCtx, result)
 			lastErr = errPrepare
 			continue
@@ -5665,6 +5677,33 @@ func logEntryWithRequestID(ctx context.Context) *log.Entry {
 		return log.WithField("request_id", reqID)
 	}
 	return log.NewEntry(log.StandardLogger())
+}
+
+func logExecutorFailure(ctx context.Context, phase string, auth *Auth, provider, routeModel, upstreamModel string, opts cliproxyexecutor.Options, err error) {
+	if err == nil {
+		return
+	}
+	authID := ""
+	authProvider := ""
+	if auth != nil {
+		authID = auth.ID
+		authProvider = auth.Provider
+	}
+	logEntryWithRequestID(ctx).WithFields(log.Fields{
+		"phase":            phase,
+		"provider":         provider,
+		"auth_provider":    authProvider,
+		"auth_id":          authID,
+		"route_model":      routeModel,
+		"upstream_model":   upstreamModel,
+		"source_format":    opts.SourceFormat.String(),
+		"response_format":  opts.ResponseFormat.String(),
+		"stream":           opts.Stream,
+		"status":           statusCodeFromError(err),
+		"error_type":       fmt.Sprintf("%T", err),
+		"context_canceled": errors.Is(err, context.Canceled),
+		"context_timeout":  errors.Is(err, context.DeadlineExceeded),
+	}).Errorf("provider executor failed: %v", err)
 }
 
 func debugLogAuthSelection(entry *log.Entry, auth *Auth, provider string, model string) {

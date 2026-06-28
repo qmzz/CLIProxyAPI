@@ -545,8 +545,10 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		if responseFormat == to {
 			scanner := bufio.NewScanner(decodedBody)
 			scanner.Buffer(nil, 52_428_800) // 50MB
+			var scannedLines int
 			for scanner.Scan() {
 				line := scanner.Bytes()
+				scannedLines++
 				helps.AppendAPIResponseChunk(ctx, e.cfg, line)
 				if detail, ok := helps.ParseClaudeStreamUsage(line); ok {
 					reporter.Publish(ctx, detail)
@@ -569,6 +571,10 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 				case out <- cliproxyexecutor.StreamChunk{Err: errScan}:
 				case <-ctx.Done():
 				}
+				return
+			}
+			if scannedLines == 0 {
+				sendClaudeEmptyStreamError(ctx, out, httpResp, 0, nil)
 			}
 			return
 		}
@@ -577,8 +583,15 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		scanner := bufio.NewScanner(decodedBody)
 		scanner.Buffer(nil, 52_428_800) // 50MB
 		var param any
+		var scannedLines int
+		var emittedChunks int
+		var firstLine []byte
 		for scanner.Scan() {
 			line := scanner.Bytes()
+			if scannedLines == 0 {
+				firstLine = bytes.Clone(bytes.TrimSpace(line))
+			}
+			scannedLines++
 			helps.AppendAPIResponseChunk(ctx, e.cfg, line)
 			if detail, ok := helps.ParseClaudeStreamUsage(line); ok {
 				reporter.Publish(ctx, detail)
@@ -597,6 +610,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 			for i := range chunks {
 				select {
 				case out <- cliproxyexecutor.StreamChunk{Payload: chunks[i]}:
+					emittedChunks++
 				case <-ctx.Done():
 					return
 				}
@@ -609,9 +623,38 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 			case out <- cliproxyexecutor.StreamChunk{Err: errScan}:
 			case <-ctx.Done():
 			}
+			return
+		}
+		if emittedChunks == 0 {
+			sendClaudeEmptyStreamError(ctx, out, httpResp, scannedLines, firstLine)
 		}
 	}()
 	return &cliproxyexecutor.StreamResult{Headers: httpResp.Header.Clone(), Chunks: out}, nil
+}
+
+func sendClaudeEmptyStreamError(ctx context.Context, out chan<- cliproxyexecutor.StreamChunk, httpResp *http.Response, scannedLines int, firstLine []byte) {
+	statusCode := 0
+	contentType := ""
+	if httpResp != nil {
+		statusCode = httpResp.StatusCode
+		contentType = httpResp.Header.Get("Content-Type")
+	}
+	msg := fmt.Sprintf("claude executor: upstream stream produced no translated payload (status=%d content_type=%q lines=%d", statusCode, contentType, scannedLines)
+	if len(firstLine) > 0 {
+		msg += fmt.Sprintf(" first_line=%q", truncateClaudeStreamPreview(firstLine, 512))
+	}
+	msg += ")"
+	select {
+	case out <- cliproxyexecutor.StreamChunk{Err: statusErr{code: http.StatusBadGateway, msg: msg}}:
+	case <-ctx.Done():
+	}
+}
+
+func truncateClaudeStreamPreview(data []byte, max int) string {
+	if max <= 0 || len(data) <= max {
+		return string(data)
+	}
+	return string(data[:max]) + "...[truncated]"
 }
 
 func validateClaudeStreamingResponse(data []byte) error {

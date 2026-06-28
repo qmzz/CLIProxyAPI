@@ -2034,6 +2034,49 @@ func TestClaudeExecutor_ExecuteStream_SetsIdentityAcceptEncoding(t *testing.T) {
 	}
 }
 
+func TestClaudeExecutor_ExecuteStreamReportsNonSSEOpenAIResponsesBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_json","type":"message"}`))
+	}))
+	defer server.Close()
+
+	executor := NewClaudeExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"api_key":  "key-123",
+		"base_url": server.URL,
+	}}
+	payload := []byte(`{"model":"claude-opus-4-8","input":"hello"}`)
+
+	result, err := executor.ExecuteStream(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "claude-opus-4-8",
+		Payload: payload,
+	}, cliproxyexecutor.Options{
+		SourceFormat:   sdktranslator.FormatOpenAIResponse,
+		ResponseFormat: sdktranslator.FormatOpenAIResponse,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteStream error: %v", err)
+	}
+
+	var streamErr error
+	for chunk := range result.Chunks {
+		if chunk.Err != nil {
+			streamErr = chunk.Err
+			break
+		}
+	}
+	if streamErr == nil {
+		t.Fatal("stream error = nil, want no translated payload error")
+	}
+	assertStatusErr(t, streamErr, http.StatusBadGateway)
+	if !strings.Contains(streamErr.Error(), "produced no translated payload") ||
+		!strings.Contains(streamErr.Error(), `content_type="application/json"`) ||
+		!strings.Contains(streamErr.Error(), `first_line="{\"id\":\"msg_json\",\"type\":\"message\"}"`) {
+		t.Fatalf("stream error = %q, want diagnostic content type and first line", streamErr.Error())
+	}
+}
+
 // TestClaudeExecutor_Execute_SetsCompressedAcceptEncoding verifies that non-streaming
 // requests keep the full accept-encoding to allow response compression (which
 // decodeResponseBody handles correctly).

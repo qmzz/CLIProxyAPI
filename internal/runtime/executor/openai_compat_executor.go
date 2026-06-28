@@ -106,6 +106,11 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 		to = sdktranslator.FromString("openai-response")
 		endpoint = "/responses/compact"
 	}
+	// Route Claude models to Claude format + /v1/messages endpoint
+	if isClaudeModel(baseModel) {
+		to = sdktranslator.FromString("claude")
+		endpoint = "/v1/messages"
+	}
 	originalPayloadSource := req.Payload
 	if len(opts.OriginalRequest) > 0 {
 		originalPayloadSource = opts.OriginalRequest
@@ -307,6 +312,12 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 	from := opts.SourceFormat
 	responseFormat := cliproxyexecutor.ResponseFormatOrSource(opts)
 	to := sdktranslator.FromString("openai")
+	endpoint := "/chat/completions"
+	// Route Claude models to Claude format + /v1/messages endpoint
+	if isClaudeModel(baseModel) {
+		to = sdktranslator.FromString("claude")
+		endpoint = "/v1/messages"
+	}
 	originalPayloadSource := req.Payload
 	if len(opts.OriginalRequest) > 0 {
 		originalPayloadSource = opts.OriginalRequest
@@ -329,7 +340,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 	translated, _ = sjson.SetBytes(translated, "stream_options.include_usage", true)
 	reporter.SetTranslatedReasoningEffort(translated, to.String())
 
-	url := strings.TrimSuffix(baseURL, "/") + "/chat/completions"
+	url := strings.TrimSuffix(baseURL, "/") + endpoint
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(translated))
 	if err != nil {
 		return nil, err
@@ -581,6 +592,10 @@ func (e *OpenAICompatExecutor) CountTokens(ctx context.Context, auth *cliproxyau
 	from := opts.SourceFormat
 	responseFormat := cliproxyexecutor.ResponseFormatOrSource(opts)
 	to := sdktranslator.FromString("openai")
+	// Route Claude models to Claude format
+	if isClaudeModel(baseModel) {
+		to = sdktranslator.FromString("claude")
+	}
 	translated := sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, false)
 
 	modelForCounting := baseModel
@@ -612,6 +627,12 @@ func (e *OpenAICompatExecutor) Refresh(ctx context.Context, auth *cliproxyauth.A
 		return refreshed, err
 	}
 	return auth, nil
+}
+
+// isClaudeModel checks if the model name indicates a Claude model.
+func isClaudeModel(modelName string) bool {
+	lower := strings.ToLower(modelName)
+	return strings.Contains(lower, "claude")
 }
 
 func openAICompatImageEndpointPath(opts cliproxyexecutor.Options) string {

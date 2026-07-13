@@ -1731,11 +1731,15 @@ const xaiFreeUsageExhaustedCooldown = 24 * time.Hour
 // (subscription:free-usage-exhausted) carries a 24h RetryAfter hint for
 // auth cooldown / account rotation. Generic 429s stay without an explicit
 // retry hint so conductor backoff still applies.
+//
+// Also tries parseCodexRetryAfter to read resets_at / resets_in_seconds
+// from OpenAI-compatible error.type == "usage_limit_reached" responses.
 func xaiStatusErr(code int, body []byte) statusErr {
 	err := statusErr{code: code, msg: string(body)}
 	if code != http.StatusTooManyRequests || len(body) == 0 {
 		return err
 	}
+	// 1. Try keyword-based free-usage-exhausted detection (xAI-specific format).
 	codeStr := strings.ToLower(gjson.GetBytes(body, "code").String())
 	msg := strings.ToLower(gjson.GetBytes(body, "error").String())
 	if msg == "" {
@@ -1746,6 +1750,12 @@ func xaiStatusErr(code int, body []byte) statusErr {
 		strings.Contains(msg, "included free usage") {
 		d := xaiFreeUsageExhaustedCooldown
 		err.retryAfter = &d
+		return err
+	}
+	// 2. Fall back to OpenAI-compatible usage_limit_reached parsing
+	//    (error.type + resets_at / resets_in_seconds).
+	if retryAfter := parseCodexRetryAfter(code, body, time.Now()); retryAfter != nil {
+		err.retryAfter = retryAfter
 	}
 	return err
 }

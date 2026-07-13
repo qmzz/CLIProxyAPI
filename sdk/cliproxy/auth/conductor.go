@@ -4362,7 +4362,7 @@ func applyAuthFailureState(auth *Auth, resultErr *Error, retryAfter *time.Durati
 		if !disableCooling {
 			if retryAfter != nil {
 				next = now.Add(*retryAfter)
-			} else if isFreeUsageExhaustedError(err) {
+			} else if isFreeUsageExhaustedError(resultErr) {
 				next = now.Add(24 * time.Hour)
 			} else {
 				next, auth.Quota.BackoffLevel = quotaCooldownAfterFailure(auth.Quota, now)

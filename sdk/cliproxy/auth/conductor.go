@@ -4095,7 +4095,8 @@ func isFreeUsageExhaustedError(err *Error) bool {
 	}
 	blob := strings.ToLower(strings.TrimSpace(err.Code + " " + err.Message))
 	return strings.Contains(blob, "free-usage-exhausted") ||
-		strings.Contains(blob, "included free usage")
+		strings.Contains(blob, "included free usage") ||
+		strings.Contains(blob, "usage_limit_reached")
 }
 
 func retryAfterFromError(err error) *time.Duration {

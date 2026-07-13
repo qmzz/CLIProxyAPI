@@ -309,53 +309,52 @@ func isAuthBlockedForModel(auth *Auth, model string, now time.Time) (bool, block
 	if auth.Disabled || auth.Status == StatusDisabled {
 		return true, blockReasonDisabled, time.Time{}
 	}
-	if model != "" {
-		if len(auth.ModelStates) > 0 {
-			state, ok := auth.ModelStates[model]
-			if (!ok || state == nil) && model != "" {
-				baseModel := canonicalModelKey(model)
-				if baseModel != "" && baseModel != model {
-					state, ok = auth.ModelStates[baseModel]
-				}
-			}
-			if ok && state != nil {
-				if state.Status == StatusDisabled {
-					return true, blockReasonDisabled, time.Time{}
-				}
-				if state.Unavailable {
-					if state.NextRetryAfter.IsZero() {
-						return false, blockReasonNone, time.Time{}
-					}
-					if state.NextRetryAfter.After(now) {
-						next := state.NextRetryAfter
-						if !state.Quota.NextRecoverAt.IsZero() && state.Quota.NextRecoverAt.After(now) {
-							next = state.Quota.NextRecoverAt
-						}
-						if next.Before(now) {
-							next = now
-						}
-						if state.Quota.Exceeded {
-							return true, blockReasonCooldown, next
-						}
-						return true, blockReasonOther, next
-					}
-				}
-				return false, blockReasonNone, time.Time{}
+	if model != "" && len(auth.ModelStates) > 0 {
+		state, ok := auth.ModelStates[model]
+		if (!ok || state == nil) && model != "" {
+			baseModel := canonicalModelKey(model)
+			if baseModel != "" && baseModel != model {
+				state, ok = auth.ModelStates[baseModel]
 			}
 		}
+		if ok && state != nil {
+			if state.Status == StatusDisabled {
+				return true, blockReasonDisabled, time.Time{}
+			}
+			if blocked, reason, next := cooldownBlocks(state.Unavailable, state.NextRetryAfter, state.Quota, now); blocked {
+				return true, reason, next
+			}
+			// Matching model state is healthy for this route.
+			return false, blockReasonNone, time.Time{}
+		}
+		// No matching model state: fall through to auth-level cooldown.
+	}
+	if blocked, reason, next := cooldownBlocks(auth.Unavailable, auth.NextRetryAfter, auth.Quota, now); blocked {
+		return true, reason, next
+	}
+	return false, blockReasonNone, time.Time{}
+}
+
+// cooldownBlocks reports whether an auth/model should stay out of rotation.
+// Quota.NextRecoverAt is honored even when Unavailable was cleared after a short
+// NextRetryAfter window, so free-usage 24h cooldowns are not lost.
+func cooldownBlocks(unavailable bool, nextRetry time.Time, quota QuotaState, now time.Time) (bool, blockReason, time.Time) {
+	next := time.Time{}
+	if nextRetry.After(now) {
+		next = nextRetry
+	}
+	if quota.Exceeded && quota.NextRecoverAt.After(now) {
+		if next.IsZero() || quota.NextRecoverAt.After(next) {
+			next = quota.NextRecoverAt
+		}
+	}
+	if next.IsZero() || !next.After(now) {
 		return false, blockReasonNone, time.Time{}
 	}
-	if auth.Unavailable && auth.NextRetryAfter.After(now) {
-		next := auth.NextRetryAfter
-		if !auth.Quota.NextRecoverAt.IsZero() && auth.Quota.NextRecoverAt.After(now) {
-			next = auth.Quota.NextRecoverAt
-		}
-		if next.Before(now) {
-			next = now
-		}
-		if auth.Quota.Exceeded {
-			return true, blockReasonCooldown, next
-		}
+	if quota.Exceeded {
+		return true, blockReasonCooldown, next
+	}
+	if unavailable {
 		return true, blockReasonOther, next
 	}
 	return false, blockReasonNone, time.Time{}

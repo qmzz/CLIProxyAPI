@@ -3779,6 +3779,10 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 							if !disableCooling {
 								if result.RetryAfter != nil {
 									next = now.Add(*result.RetryAfter)
+								} else if isFreeUsageExhaustedError(result.Error) {
+									// Belt-and-suspenders: if RetryAfter was lost in wrapping,
+									// still honor xAI free-tier rolling 24h window.
+									next = now.Add(24 * time.Hour)
 								} else {
 									next, backoffLevel = quotaCooldownAfterFailure(state.Quota, now)
 								}
@@ -3913,17 +3917,27 @@ func updateAggregatedAvailability(auth *Auth, now time.Time) {
 		stateUnavailable := false
 		if state.Status == StatusDisabled {
 			stateUnavailable = true
-		} else if state.Unavailable {
-			if state.NextRetryAfter.IsZero() {
-				stateUnavailable = false
-			} else if state.NextRetryAfter.After(now) {
-				stateUnavailable = true
-				if earliestRetry.IsZero() || state.NextRetryAfter.Before(earliestRetry) {
-					earliestRetry = state.NextRetryAfter
+		} else if state.Unavailable || (state.Quota.Exceeded && state.Quota.NextRecoverAt.After(now)) {
+			next := state.NextRetryAfter
+			if state.Quota.Exceeded && state.Quota.NextRecoverAt.After(now) {
+				if next.IsZero() || state.Quota.NextRecoverAt.After(next) {
+					next = state.Quota.NextRecoverAt
 				}
-			} else {
+			}
+			if next.After(now) {
+				stateUnavailable = true
+				state.Unavailable = true
+				if state.NextRetryAfter.IsZero() || state.NextRetryAfter.Before(now) {
+					state.NextRetryAfter = next
+				}
+				if earliestRetry.IsZero() || next.Before(earliestRetry) {
+					earliestRetry = next
+				}
+			} else if state.Unavailable {
+				// Recovery window elapsed; clear transient unavailability.
 				state.Unavailable = false
 				state.NextRetryAfter = time.Time{}
+				stateUnavailable = false
 			}
 		}
 		if !stateUnavailable {
@@ -4072,6 +4086,16 @@ func refreshErrorFromError(err error) *Error {
 		authErr.Retryable = false
 	}
 	return authErr
+}
+
+
+func isFreeUsageExhaustedError(err *Error) bool {
+	if err == nil {
+		return false
+	}
+	blob := strings.ToLower(strings.TrimSpace(err.Code + " " + err.Message))
+	return strings.Contains(blob, "free-usage-exhausted") ||
+		strings.Contains(blob, "included free usage")
 }
 
 func retryAfterFromError(err error) *time.Duration {
@@ -4338,6 +4362,8 @@ func applyAuthFailureState(auth *Auth, resultErr *Error, retryAfter *time.Durati
 		if !disableCooling {
 			if retryAfter != nil {
 				next = now.Add(*retryAfter)
+			} else if isFreeUsageExhaustedError(err) {
+				next = now.Add(24 * time.Hour)
 			} else {
 				next, auth.Quota.BackoffLevel = quotaCooldownAfterFailure(auth.Quota, now)
 			}

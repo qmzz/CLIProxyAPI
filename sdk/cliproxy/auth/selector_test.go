@@ -124,6 +124,36 @@ func TestFillFirstSelectorPick_PriorityFallbackCooldown(t *testing.T) {
 	}
 }
 
+func TestFillFirstSelectorPick_FallsBackToAuthCooldownForUnmappedRoute(t *testing.T) {
+	t.Parallel()
+
+	selector := &FillFirstSelector{}
+	now := time.Now()
+	high := &Auth{
+		ID:         "high",
+		Attributes: map[string]string{"priority": "10"},
+		ModelStates: map[string]*ModelState{
+			"grok-4.5-build-free": {Status: StatusActive},
+		},
+		Unavailable:    true,
+		NextRetryAfter: now.Add(24 * time.Hour),
+		Quota: QuotaState{
+			Exceeded:      true,
+			Reason:        "quota",
+			NextRecoverAt: now.Add(24 * time.Hour),
+		},
+	}
+	low := &Auth{ID: "low", Attributes: map[string]string{"priority": "0"}}
+
+	got, err := selector.Pick(context.Background(), "xai", "grok-4.5", cliproxyexecutor.Options{}, []*Auth{high, low})
+	if err != nil {
+		t.Fatalf("Pick() error = %v", err)
+	}
+	if got == nil || got.ID != "low" {
+		t.Fatalf("Pick() auth = %v, want low", got)
+	}
+}
+
 func TestRoundRobinSelectorPick_Concurrent(t *testing.T) {
 	selector := &RoundRobinSelector{}
 	auths := []*Auth{

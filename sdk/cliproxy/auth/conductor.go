@@ -4081,8 +4081,13 @@ func retryAfterFromError(err error) *time.Duration {
 	type retryAfterProvider interface {
 		RetryAfter() *time.Duration
 	}
-	rap, ok := err.(retryAfterProvider)
-	if !ok || rap == nil {
+	// Use errors.As so wrapped executor errors (e.g. streamBootstrapError around
+	// xAI free-usage statusErr) still expose the 24h RetryAfter. A direct type
+	// assert only matched the outer wrapper and dropped the cooldown to the
+	// short quota backoff ladder (1s/2s/...), causing already-exhausted auths
+	// to be reselected on the next credential switch.
+	var rap retryAfterProvider
+	if !errors.As(err, &rap) || rap == nil {
 		return nil
 	}
 	retryAfter := rap.RetryAfter()

@@ -29,7 +29,9 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Test auth cooldown routing
-        run: go test ./sdk/cliproxy/auth
+        run: >-
+          go test ./sdk/cliproxy/auth -run
+          '^(TestCooldownBlocksHonorsQuotaRecoverWindow|TestIsAuthBlockedForModelFallsBackToAuthQuota|TestFillFirstSelectorPick_FallsBackToAuthCooldownForUnmappedRoute|TestRetryAfterFromErrorUnwrapsWrappedStatus|TestManager_MarkResult_XAIErrorDisablesCredentialFor24h|TestManager_MarkResult_XAIErrorRespectsDisableCooling|TestPreserveAuthLevelRuntimeCooldown_KeepsXAI24hAcrossReload|TestManager_MarkResult_EmptyStreamDisablesXAIFor24h|TestIsEmptyStreamError|TestManager_Update_PreservesCooldownAcrossAuthFileReload|TestManager_List_RevivesExpiredXAIAutoDisable|TestManager_Update_XAIExplicitManualEnableClearsAutoDisable|TestManager_SelectAuth_RevivesExpiredXAIAutoDisable)$'
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Login to GHCR

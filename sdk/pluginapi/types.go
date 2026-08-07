@@ -1045,12 +1045,16 @@ type RequestCompletion struct {
 	Model          string
 	RequestedModel string
 	Stream         bool
-	Outcome        RequestCompletionOutcome
-	StatusCode     int
-	Error          string
-	StartedAt      time.Time
-	CompletedAt    time.Time
-	Metadata       map[string]any
+	// AuthID identifies the credential the scheduler selected for this request.
+	// It is empty when the request ended before auth selection, such as when a
+	// request interceptor rejected it.
+	AuthID      string
+	Outcome     RequestCompletionOutcome
+	StatusCode  int
+	Error       string
+	StartedAt   time.Time
+	CompletedAt time.Time
+	Metadata    map[string]any
 }
 
 // ResponseInterceptRequest describes a successful non-streaming response.

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -79,12 +80,30 @@ func (t *requestLifecycleTracker) requestID() string {
 	return t.completion.RequestID
 }
 
+// selectedAuthID reports the credential the scheduler chose for this request.
+// The conductor publishes it into the shared execution metadata once an auth is
+// selected, so it stays empty for requests that end before selection.
+func (t *requestLifecycleTracker) selectedAuthID() string {
+	if t == nil || t.completion.Metadata == nil {
+		return ""
+	}
+	switch value := t.completion.Metadata[coreexecutor.SelectedAuthMetadataKey].(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case []byte:
+		return strings.TrimSpace(string(value))
+	default:
+		return ""
+	}
+}
+
 func (t *requestLifecycleTracker) complete(outcome pluginapi.RequestCompletionOutcome, statusCode int, err error) {
 	if t == nil {
 		return
 	}
 	t.once.Do(func() {
 		completion := t.completion
+		completion.AuthID = t.selectedAuthID()
 		completion.Outcome = outcome
 		completion.StatusCode = statusCode
 		completion.CompletedAt = time.Now()
